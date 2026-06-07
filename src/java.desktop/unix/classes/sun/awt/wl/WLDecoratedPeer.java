@@ -34,6 +34,7 @@ import java.awt.event.MouseEvent;
 
 public abstract class WLDecoratedPeer extends WLWindowPeer {
     private FrameDecoration decoration; // protected by stateLock
+    private long nativeWindowPtr; // protected by stateLock
     private final boolean isUndecorated;
     private final boolean showMaximize;
     private final boolean showMinimize;
@@ -98,6 +99,9 @@ public abstract class WLDecoratedPeer extends WLWindowPeer {
         synchronized (getStateLock()) {
             decoration.dispose();
             decoration = determineDecoration(isFullscreen | isUndecorated, showMinimize, showMaximize);
+            if (nativeWindowPtr != 0) {
+                decoration.notifyNativeWindowCreated(nativeWindowPtr);
+            }
         }
         // Since the client area of the window may have changed, need to re-validate the target
         // to let it re-layout its children.
@@ -224,11 +228,17 @@ public abstract class WLDecoratedPeer extends WLWindowPeer {
 
     @Override
     protected void notifyNativeWindowCreated(long nativePtr) {
+        synchronized (getStateLock()) {
+            nativeWindowPtr = nativePtr;
+        }
         decoration.notifyNativeWindowCreated(nativePtr);
     }
 
     @Override
     protected void notifyNativeWindowToBeHidden(long nativePtr) {
         decoration.notifyNativeWindowToBeHidden(nativePtr);
+        synchronized (getStateLock()) {
+            nativeWindowPtr = 0;
+        }
     }
 }

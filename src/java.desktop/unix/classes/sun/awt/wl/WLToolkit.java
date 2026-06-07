@@ -99,6 +99,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Properties;
+import java.util.WeakHashMap;
 import java.util.concurrent.Semaphore;
 
 /**
@@ -149,6 +150,7 @@ public class WLToolkit extends UNIXToolkit implements Runnable, ToolkitAPI {
     private static Thread toolkitThread;
     private static WLDataDevice dataDevice;
     private static WLDragSourceContextPeer dragSourceContextPeer;
+    private static final Map<Component, DirectDrawingSurfaceState> directDrawingSurfaces = new WeakHashMap<>();
 
     private static Boolean sunAwtDisableGtkFileDialogs = null;
 
@@ -214,6 +216,77 @@ public class WLToolkit extends UNIXToolkit implements Runnable, ToolkitAPI {
         Thread shutdownThread = InnocuousThread.newSystemThread("WLToolkit-Shutdown-Thread", r);
         shutdownThread.setDaemon(true);
         Runtime.getRuntime().addShutdownHook(shutdownThread);
+    }
+
+    private static long[] getWaylandDrawingSurfaceInfo(Component target) {
+        Window toplevel = target instanceof Window window && !WLComponentPeer.isWlPopup(window)
+                ? window
+                : WLComponentPeer.getToplevelFor(target);
+        if (toplevel == null) {
+            return null;
+        }
+
+        WLWindowPeer peer = AWTAccessor.getComponentAccessor().getPeer(toplevel);
+        if (peer == null) {
+            return null;
+        }
+
+        WLMainSurface surface = peer.getSurface();
+        if (surface == null) {
+            surface = peer.getOrCreateSurfaceForJAWT();
+        }
+        peer.updateSurfaceSize();
+
+        Point location = target == toplevel
+                ? new Point()
+                : WLComponentPeer.getRelativeLocation(target, toplevel);
+        Point surfaceLocation = peer.javaUnitsToSurfaceUnits(location);
+        int surfaceWidth = peer.javaUnitsToSurfaceSize(target.getWidth());
+        int surfaceHeight = peer.javaUnitsToSurfaceSize(target.getHeight());
+        int javaX = location.x;
+        int javaY = location.y;
+        int javaWidth = target.getWidth();
+        int javaHeight = target.getHeight();
+        DirectDrawingSurfaceState renderState = getOrCreateDirectDrawingSurface(target, surface,
+                surfaceLocation.x, surfaceLocation.y, surfaceWidth, surfaceHeight);
+        WLSubSurface renderSurface = renderState.surface;
+
+        return new long[] {
+                WLDisplay.getInstance().getDisplayPtr(),
+                renderSurface.getWlSurfacePtr(),
+                surfaceLocation.x,
+                surfaceLocation.y,
+                surfaceWidth,
+                surfaceHeight,
+                peer.getDisplayScale(),
+                javaX,
+                javaY,
+                javaWidth,
+                javaHeight
+        };
+    }
+
+    private static DirectDrawingSurfaceState getOrCreateDirectDrawingSurface(Component target, WLMainSurface parentSurface,
+                                                                            int x, int y, int width, int height) {
+        synchronized (directDrawingSurfaces) {
+            DirectDrawingSurfaceState state = directDrawingSurfaces.get(target);
+            if (state == null) {
+                state = new DirectDrawingSurfaceState(new WLSubSurface(parentSurface, x, y, true));
+                directDrawingSurfaces.put(target, state);
+            } else {
+                state.surface.setPosition(x, y);
+            }
+            state.surface.updateSurfaceSize(Math.max(width, 1), Math.max(height, 1));
+            return state;
+        }
+    }
+
+    private static final class DirectDrawingSurfaceState {
+        final WLSubSurface surface;
+
+        DirectDrawingSurfaceState(WLSubSurface surface) {
+            this.surface = surface;
+        }
     }
 
     // called from native

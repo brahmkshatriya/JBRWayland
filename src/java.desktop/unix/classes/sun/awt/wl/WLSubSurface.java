@@ -30,13 +30,20 @@ public class WLSubSurface extends WLSurface {
     private final long wlSubSurfacePtr; // a pointer to a wl_subsurface object
 
     public WLSubSurface(WLMainSurface mainSurface, int x, int y) {
+        this(mainSurface, x, y, false);
+    }
+
+    public WLSubSurface(WLMainSurface mainSurface, int x, int y, boolean aboveParent) {
         super();
-        wlSubSurfacePtr = nativeCreateWlSubSurface(getWlSurfacePtr(), mainSurface.getWlSurfacePtr());
+        wlSubSurfacePtr = nativeCreateWlSubSurface(getWlSurfacePtr(), mainSurface.getWlSurfacePtr(), aboveParent);
         if (wlSubSurfacePtr == 0) {
             throw new RuntimeException("Failed to create WLSubSurface");
         }
 
         nativeSetPosition(wlSubSurfacePtr, x, y);
+        if (aboveParent) {
+            nativeSetDesync(wlSubSurfacePtr);
+        }
     }
 
     @Override
@@ -57,7 +64,14 @@ public class WLSubSurface extends WLSurface {
         }
     }
 
-    private native long nativeCreateWlSubSurface(long surfacePtr, long parentSurfacePtr);
+    void setPosition(int x, int y) {
+        assertIsValid();
+
+        nativeSetPosition(wlSubSurfacePtr, x, y);
+    }
+
+    private native long nativeCreateWlSubSurface(long surfacePtr, long parentSurfacePtr, boolean aboveParent);
     private native long nativeDestroyWlSubSurface(long subsurfacePtr);
     private native void nativeSetPosition(long ptr, int x, int y);
+    private native void nativeSetDesync(long ptr);
 }

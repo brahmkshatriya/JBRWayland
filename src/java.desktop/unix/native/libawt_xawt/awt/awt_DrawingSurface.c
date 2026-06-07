@@ -35,6 +35,9 @@
 #include <jni.h>
 #include <jni_util.h>
 #include <jawt_md.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
 
 extern struct ComponentIDs componentIDs;
 
@@ -44,6 +47,100 @@ extern jfieldID targetID;
 extern jfieldID graphicsConfigID;
 extern jfieldID drawStateID;
 extern struct X11GraphicsConfigIDs x11GraphicsConfigIDs;
+
+typedef struct awt_DrawingSurface {
+    JAWT_DrawingSurface jawt;
+    jboolean waylandLocked;
+} awt_DrawingSurface;
+
+static jlongArray
+awt_GetWaylandDrawingSurfaceData(JNIEnv* env, jobject target)
+{
+    jvalue result = JNU_CallStaticMethodByName(env, NULL,
+                                              "sun/awt/wl/WLToolkit",
+                                              "getWaylandDrawingSurfaceInfo",
+                                              "(Ljava/awt/Component;)[J",
+                                              target);
+    if ((*env)->ExceptionCheck(env)) {
+        return NULL;
+    }
+    return (jlongArray)result.l;
+}
+
+static jboolean
+awt_IsWLToolkit(JNIEnv* env)
+{
+    jclass toolkitClass;
+    jmethodID getDefaultToolkit;
+    jobject toolkit;
+    jclass classClass;
+    jmethodID getName;
+    jclass actualClass;
+    jstring name;
+    const char* chars;
+    jboolean result;
+
+    toolkitClass = (*env)->FindClass(env, "java/awt/Toolkit");
+    if (toolkitClass == NULL) {
+        return JNI_FALSE;
+    }
+    getDefaultToolkit = (*env)->GetStaticMethodID(env, toolkitClass,
+                                                  "getDefaultToolkit",
+                                                  "()Ljava/awt/Toolkit;");
+    if (getDefaultToolkit == NULL) {
+        return JNI_FALSE;
+    }
+    toolkit = (*env)->CallStaticObjectMethod(env, toolkitClass, getDefaultToolkit);
+    if ((*env)->ExceptionCheck(env) || toolkit == NULL) {
+        return JNI_FALSE;
+    }
+
+    classClass = (*env)->FindClass(env, "java/lang/Class");
+    if (classClass == NULL) {
+        return JNI_FALSE;
+    }
+    getName = (*env)->GetMethodID(env, classClass, "getName", "()Ljava/lang/String;");
+    if (getName == NULL) {
+        return JNI_FALSE;
+    }
+
+    actualClass = (*env)->GetObjectClass(env, toolkit);
+    name = (jstring)(*env)->CallObjectMethod(env, actualClass, getName);
+    if ((*env)->ExceptionCheck(env) || name == NULL) {
+        return JNI_FALSE;
+    }
+
+    chars = (*env)->GetStringUTFChars(env, name, NULL);
+    if (chars == NULL) {
+        return JNI_FALSE;
+    }
+    result = strcmp(chars, "sun.awt.wl.WLToolkit") == 0 ? JNI_TRUE : JNI_FALSE;
+    (*env)->ReleaseStringUTFChars(env, name, chars);
+    return result;
+}
+
+static jboolean
+awt_IsWaylandDrawingSurface(JNIEnv* env, jobject target)
+{
+    jlongArray data = awt_GetWaylandDrawingSurfaceData(env, target);
+    if (data == NULL) {
+        return JNI_FALSE;
+    }
+    (*env)->DeleteLocalRef(env, data);
+    return JNI_TRUE;
+}
+
+static void
+awt_WaylandLock(JNIEnv* env)
+{
+    JNU_CallStaticMethodByName(env, NULL, "sun/awt/wl/WLToolkit", "awtLock", "()V");
+}
+
+static void
+awt_WaylandUnlock(JNIEnv* env)
+{
+    JNU_CallStaticMethodByName(env, NULL, "sun/awt/wl/WLToolkit", "awtUnlock", "()V");
+}
 
 /*
  * Lock the surface of the target component for native rendering.
@@ -66,6 +163,7 @@ JNIEXPORT jint JNICALL awt_DrawingSurface_Lock(JAWT_DrawingSurface* ds)
     jobject target, peer;
     jclass componentClass;
     jint drawState;
+    awt_DrawingSurface* pds;
 
     if (ds == NULL) {
 #ifdef DEBUG
@@ -86,6 +184,24 @@ JNIEXPORT jint JNICALL awt_DrawingSurface_Lock(JAWT_DrawingSurface* ds)
 #endif
         return (jint)JAWT_LOCK_ERROR;
         }
+
+    pds = (awt_DrawingSurface*)ds;
+    if (awt_IsWLToolkit(env)) {
+        awt_WaylandLock(env);
+        if ((*env)->ExceptionCheck(env)) {
+            return (jint)JAWT_LOCK_ERROR;
+        }
+        if (awt_IsWaylandDrawingSurface(env, target)) {
+            pds->waylandLocked = JNI_TRUE;
+            return (jint)(JAWT_LOCK_SURFACE_CHANGED |
+                          JAWT_LOCK_BOUNDS_CHANGED |
+                          JAWT_LOCK_CLIP_CHANGED);
+        }
+        awt_WaylandUnlock(env);
+        if ((*env)->ExceptionCheck(env)) {
+            return (jint)JAWT_LOCK_ERROR;
+        }
+    }
 
     if (!awtLockInited) {
         return (jint)JAWT_LOCK_ERROR;
@@ -184,8 +300,11 @@ awt_DrawingSurface_GetDrawingSurfaceInfo(JAWT_DrawingSurface* ds)
     jobject target, peer;
     jclass componentClass;
     JAWT_X11DrawingSurfaceInfo* px;
+    JAWT_WaylandDrawingSurfaceInfo* pw;
     JAWT_DrawingSurfaceInfo* p;
     XWindowAttributes attrs;
+    jlongArray wlData;
+    jlong* wl;
 
     if (ds == NULL) {
 #ifdef DEBUG
@@ -207,6 +326,52 @@ awt_DrawingSurface_GetDrawingSurfaceInfo(JAWT_DrawingSurface* ds)
 #endif
         return NULL;
         }
+
+    wlData = awt_IsWLToolkit(env) ? awt_GetWaylandDrawingSurfaceData(env, target) : NULL;
+    if (wlData != NULL) {
+        wl = (*env)->GetLongArrayElements(env, wlData, NULL);
+        if (wl == NULL) {
+            (*env)->DeleteLocalRef(env, wlData);
+            return NULL;
+        }
+
+        pw = (JAWT_WaylandDrawingSurfaceInfo*)
+            malloc(sizeof(JAWT_WaylandDrawingSurfaceInfo));
+        if (pw == NULL) {
+            (*env)->ReleaseLongArrayElements(env, wlData, wl, JNI_ABORT);
+            (*env)->DeleteLocalRef(env, wlData);
+            return NULL;
+        }
+        pw->display = (struct wl_display*)(intptr_t)wl[0];
+        pw->parentSurface = (struct wl_surface*)(intptr_t)wl[1];
+        pw->x = (int)wl[2];
+        pw->y = (int)wl[3];
+        pw->width = (int)wl[4];
+        pw->height = (int)wl[5];
+        pw->scale = (int)wl[6];
+        pw->javaX = (int)wl[7];
+        pw->javaY = (int)wl[8];
+        pw->javaWidth = (int)wl[9];
+        pw->javaHeight = (int)wl[10];
+
+        (*env)->ReleaseLongArrayElements(env, wlData, wl, JNI_ABORT);
+        (*env)->DeleteLocalRef(env, wlData);
+
+        p = (JAWT_DrawingSurfaceInfo*)malloc(sizeof(JAWT_DrawingSurfaceInfo));
+        if (p == NULL) {
+            free(pw);
+            return NULL;
+        }
+        p->platformInfo = pw;
+        p->ds = ds;
+        p->bounds.x = (*env)->GetIntField(env, target, componentIDs.x);
+        p->bounds.y = (*env)->GetIntField(env, target, componentIDs.y);
+        p->bounds.width = (*env)->GetIntField(env, target, componentIDs.width);
+        p->bounds.height = (*env)->GetIntField(env, target, componentIDs.height);
+        p->clipSize = 1;
+        p->clip = &(p->bounds);
+        return p;
+    }
 
     if (!awtLockInited) {
         return NULL;
@@ -280,6 +445,7 @@ awt_DrawingSurface_FreeDrawingSurfaceInfo(JAWT_DrawingSurfaceInfo* dsi)
 JNIEXPORT void JNICALL awt_DrawingSurface_Unlock(JAWT_DrawingSurface* ds)
 {
     JNIEnv* env;
+    awt_DrawingSurface* pds;
     if (ds == NULL) {
 #ifdef DEBUG
         fprintf(stderr, "Drawing Surface is NULL\n");
@@ -287,6 +453,12 @@ JNIEXPORT void JNICALL awt_DrawingSurface_Unlock(JAWT_DrawingSurface* ds)
         return;
     }
     env = ds->env;
+    pds = (awt_DrawingSurface*)ds;
+    if (pds->waylandLocked) {
+        pds->waylandLocked = JNI_FALSE;
+        awt_WaylandUnlock(env);
+        return;
+    }
     AWT_FLUSH_UNLOCK();
 }
 
@@ -295,6 +467,7 @@ JNIEXPORT JAWT_DrawingSurface* JNICALL
 {
     jclass componentClass;
     JAWT_DrawingSurface* p;
+    awt_DrawingSurface* pds;
 
     /* Make sure the target component is a java.awt.Component */
     componentClass = (*env)->FindClass(env, "java/awt/Component");
@@ -308,7 +481,11 @@ JNIEXPORT JAWT_DrawingSurface* JNICALL
         return NULL;
     }
 
-    p = (JAWT_DrawingSurface*)malloc(sizeof(JAWT_DrawingSurface));
+    pds = (awt_DrawingSurface*)calloc(1, sizeof(awt_DrawingSurface));
+    if (pds == NULL) {
+        return NULL;
+    }
+    p = (JAWT_DrawingSurface*)pds;
     p->env = env;
     p->target = (*env)->NewGlobalRef(env, target);
     p->Lock = awt_DrawingSurface_Lock;

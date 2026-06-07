@@ -294,12 +294,16 @@ Java_sun_awt_wl_WLMainSurface_nativeActivate
 
 JNIEXPORT jlong JNICALL
 Java_sun_awt_wl_WLSubSurface_nativeCreateWlSubSurface
-        (JNIEnv *env, jobject obj, jlong surfacePtr, jlong parentSurfacePtr)
+        (JNIEnv *env, jobject obj, jlong surfacePtr, jlong parentSurfacePtr, jboolean aboveParent)
 {
     struct wl_surface* parentSurface = jlong_to_ptr(parentSurfacePtr);
     struct wl_surface* surface = jlong_to_ptr(surfacePtr);
     struct wl_subsurface* subSurface = wl_subcompositor_get_subsurface(wl_subcompositor, surface, parentSurface);
-    wl_subsurface_place_below(subSurface, parentSurface);
+    if (aboveParent) {
+        wl_subsurface_place_above(subSurface, parentSurface);
+    } else {
+        wl_subsurface_place_below(subSurface, parentSurface);
+    }
 
     // Do not accept any input, we must be able to click through any sub-surface
 	struct wl_region* input_region = wl_compositor_create_region(wl_compositor);
@@ -328,3 +332,11 @@ Java_sun_awt_wl_WLSubSurface_nativeSetPosition
     wl_subsurface_set_position(subSurface, x, y);
 }
 
+JNIEXPORT void JNICALL
+Java_sun_awt_wl_WLSubSurface_nativeSetDesync
+        (JNIEnv *env, jobject obj, jlong subSurfacePtr)
+{
+    struct wl_subsurface* subSurface = jlong_to_ptr(subSurfacePtr);
+
+    wl_subsurface_set_desync(subSurface);
+}

@@ -34,6 +34,9 @@
 extern "C" {
 #endif
 
+struct wl_display;
+struct wl_surface;
+
 /*
  * X11-specific declarations for AWT native interface.
  * See notes in jawt.h for an example of use.
@@ -52,6 +55,28 @@ typedef struct jawt_X11DrawingSurfaceInfo {
     int (JNICALL *GetAWTColor)(JAWT_DrawingSurface* ds,
         int r, int g, int b);
 } JAWT_X11DrawingSurfaceInfo;
+
+/*
+ * Wayland-specific declarations for AWT native interface.
+ *
+ * parentSurface is the wl_surface owned and positioned by AWT for native
+ * rendering. On WLToolkit this is a component-specific child surface whose
+ * input region is empty; native renderers should attach buffers to this surface
+ * and must not create another wl_subsurface from it.
+ */
+typedef struct jawt_WaylandDrawingSurfaceInfo {
+    struct wl_display *display;
+    struct wl_surface *parentSurface;
+    int x;
+    int y;
+    int width;
+    int height;
+    int scale;
+    int javaX;
+    int javaY;
+    int javaWidth;
+    int javaHeight;
+} JAWT_WaylandDrawingSurfaceInfo;
 
 #ifdef __cplusplus
 }

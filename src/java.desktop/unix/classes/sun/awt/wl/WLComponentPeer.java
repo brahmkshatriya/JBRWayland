@@ -45,6 +45,7 @@ import sun.util.logging.PlatformLogger;
 import sun.util.logging.PlatformLogger.Level;
 
 import javax.swing.SwingUtilities;
+import javax.swing.RootPaneContainer;
 import java.awt.AWTEvent;
 import java.awt.AWTException;
 import java.awt.BufferCapabilities;
@@ -94,6 +95,7 @@ public class WLComponentPeer implements ComponentPeer, WLSurfaceSizeListener {
     private static final PlatformLogger popupLog = PlatformLogger.getLogger("sun.awt.wl.popup.WLComponentPeer");
 
     public static final String POPUP_POSITION_UNCONSTRAINED_CLIENT_PROPERTY = "wlawt.popup_position_unconstrained";
+    public static final String WINDOW_SHADOW_CLIENT_PROPERTY = "sun.awt.wl.WindowShadow";
 
     protected static final int MINIMUM_WIDTH = 1;
     protected static final int MINIMUM_HEIGHT = 1;
@@ -107,6 +109,7 @@ public class WLComponentPeer implements ComponentPeer, WLSurfaceSizeListener {
     protected SurfaceData surfaceData; // accessed under AWT lock
     private WLMainSurface wlSurface; // accessed under AWT lock
     private Shadow shadow; // accessed under AWT lock
+    private final boolean dropShadow;
     private final WLRepaintArea paintArea;
     private boolean paintPending = false; // protected by stateLock
     private boolean isLayouting = false; // protected by stateLock
@@ -158,6 +161,7 @@ public class WLComponentPeer implements ComponentPeer, WLSurfaceSizeListener {
 
     protected WLComponentPeer(Component target, boolean dropShadow) {
         this.target = target;
+        this.dropShadow = dropShadow;
         this.kwinAppId = WLKWinHelperState.isEnabled() ? WLKWinHelper.generateAppID() : null;
         this.background = target.isBackgroundSet() ? target.getBackground() : SystemColor.window;
         Dimension size = constrainSize(target.getBounds().getSize());
@@ -172,10 +176,49 @@ public class WLComponentPeer implements ComponentPeer, WLSurfaceSizeListener {
             log.fine("WLComponentPeer: target=" + target + " with size=" + wlSize);
         }
 
-        if (dropShadow && shadowEnabled) {
-            shadow = new ShadowImpl(targetIsWlPopup() ? ShadowImage.POPUP_SHADOW_SIZE : ShadowImage.WINDOW_SHADOW_SIZE);
-        } else {
-            shadow = new NilShadow();
+        shadow = createShadow();
+        installWindowShadowPropertyListener(target);
+    }
+
+    private static boolean windowWantsShadow(Component target) {
+        Object property = target instanceof RootPaneContainer rootPaneContainer
+                ? rootPaneContainer.getRootPane().getClientProperty(WINDOW_SHADOW_CLIENT_PROPERTY)
+                : null;
+        if (property instanceof Boolean enabled) {
+            return enabled;
+        }
+        return !(target instanceof Window window) || window.isOpaque();
+    }
+
+    private Shadow createShadow() {
+        if (dropShadow && shadowEnabled && windowWantsShadow(target)) {
+            return new ShadowImpl(targetIsWlPopup() ? ShadowImage.POPUP_SHADOW_SIZE : ShadowImage.WINDOW_SHADOW_SIZE);
+        }
+        return new NilShadow();
+    }
+
+    private void installWindowShadowPropertyListener(Component target) {
+        if (target instanceof RootPaneContainer rootPaneContainer) {
+            rootPaneContainer.getRootPane().addPropertyChangeListener(WINDOW_SHADOW_CLIENT_PROPERTY, e -> {
+                performLocked(this::updateWindowShadow);
+            });
+        }
+    }
+
+    private void updateWindowShadow() {
+        assert SunToolkit.isAWTLockHeldByCurrentThread() : "This method must be invoked while holding the AWT lock";
+
+        Shadow newShadow = createShadow();
+        shadow.dispose();
+        shadow = newShadow;
+        if (wlSurface != null && visible) {
+            shadow.createSurface();
+            shadow.updateSurfaceSize();
+            shadow.commitSurface();
+            synchronized (getStateLock()) {
+                shadow.notifyConfigured(isActive, target instanceof Frame frame
+                        && (frame.getExtendedState() & Frame.MAXIMIZED_BOTH) == Frame.MAXIMIZED_BOTH, isFullscreen);
+            }
         }
     }
 
@@ -430,8 +473,9 @@ public class WLComponentPeer implements ComponentPeer, WLSurfaceSizeListener {
             boolean isUnconstrained = isPopupPositionUnconstrained();
 
             performLocked(() -> {
-                assert wlSurface == null : "Invisible window already has a Wayland surface attached";
-                wlSurface = new WLMainSurface((WLWindowPeer) this);
+                if (wlSurface == null) {
+                    wlSurface = new WLMainSurface((WLWindowPeer) this);
+                }
                 long wlSurfacePtr = wlSurface.getWlSurfacePtr();
                 if (isWlPopup) {
                     Window popup = (Window) target;
@@ -1260,6 +1304,13 @@ public class WLComponentPeer implements ComponentPeer, WLSurfaceSizeListener {
     }
 
     public WLMainSurface getSurface() {
+        return wlSurface;
+    }
+
+    WLMainSurface getOrCreateSurfaceForJAWT() {
+        if (wlSurface == null) {
+            wlSurface = new WLMainSurface((WLWindowPeer) this);
+        }
         return wlSurface;
     }
 
