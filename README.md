@@ -70,33 +70,70 @@ bash configure \
   --with-jvm-variants=server \
   --disable-warnings-as-errors \
   --with-boot-jdk=/path/to/jdk-25 \
-  --disable-javac-server
+  --disable-javac-server \
+  --enable-linkable-runtime \
+  --enable-keep-packaged-modules
 ```
 
 Build:
 
 ```bash
 make CONF=skiko-wl jdk LOG=info
+make CONF=skiko-wl images LOG=info
 ```
 
-The runtime is produced at:
+The exploded JDK is produced at:
 
 ```text
-build/skiko-wl/jdk
+build/skiko-wl/images/jdk
 ```
 
 Check it with:
 
 ```bash
-build/skiko-wl/jdk/bin/java -version
+build/skiko-wl/images/jdk/bin/java -version
 ```
+
+## Create A Compact JRE
+
+After building `images`, use the patched JDK's `jlink` and bundled `jmods`:
+
+```bash
+rm -rf /tmp/jbr-wayland-jre /tmp/jbr-wayland-jre-linux-x64.tar.gz
+
+build/skiko-wl/images/jdk/bin/jlink \
+  --module-path build/skiko-wl/images/jdk/jmods \
+  --add-modules java.base,java.desktop,java.logging,java.management,jdk.unsupported,jdk.crypto.ec,java.naming,java.xml \
+  --strip-debug \
+  --no-header-files \
+  --no-man-pages \
+  --compress=zip-6 \
+  --output /tmp/jbr-wayland-jre
+
+tar -C /tmp -czf /tmp/jbr-wayland-jre-linux-x64.tar.gz jbr-wayland-jre
+```
+
+Check the JRE:
+
+```bash
+/tmp/jbr-wayland-jre/bin/java -version
+```
+
+The release asset should be named:
+
+```text
+jbr-wayland-jre-linux-x64.tar.gz
+```
+
+That name is intentionally boring: Gradle scripts can match it as a Linux
+x64 JRE/runtime tarball from GitHub releases.
 
 ## Use With Compose Desktop
 
 Use this JBR as the JVM that runs the app, and enable WLToolkit:
 
 ```bash
-JAVA_HOME=/path/to/JBRWayland/build/skiko-wl/jdk ./gradlew :app:run
+JAVA_HOME=/path/to/JBRWayland/build/skiko-wl/images/jdk ./gradlew :app:run
 ```
 
 Add these JVM options to the Compose Desktop app:
@@ -119,7 +156,7 @@ For Compose Gradle packaging, set the application `javaHome`:
 compose.desktop {
     application {
         mainClass = "com.example.MainKt"
-        javaHome = "/path/to/JBRWayland/build/skiko-wl/jdk"
+        javaHome = "/path/to/JBRWayland/build/skiko-wl/images/jdk"
 
         jvmArgs += listOf(
             "--enable-native-access=ALL-UNNAMED",
@@ -145,7 +182,7 @@ If you want Gradle `JavaExec` run tasks to always launch the app with this
 JBR while Gradle itself runs on another stable JDK:
 
 ```kotlin
-val patchedJbr = file("/path/to/JBRWayland/build/skiko-wl/jdk")
+val patchedJbr = file("/path/to/JBRWayland/build/skiko-wl/images/jdk")
 
 afterEvaluate {
     tasks.withType<JavaExec>().configureEach {
