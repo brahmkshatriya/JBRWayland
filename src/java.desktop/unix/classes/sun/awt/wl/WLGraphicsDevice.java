@@ -147,7 +147,8 @@ public class WLGraphicsDevice extends GraphicsDevice {
         this.widthMm = widthMm;
         this.heightMm = heightMm;
         this.displayScale = displayScale;
-        this.effectiveScale = WLGraphicsEnvironment.effectiveScaleFrom(displayScale);
+        this.effectiveScale = WLGraphicsEnvironment.effectiveScaleFrom(displayScale,
+                width, height, widthLogical, heightLogical);
 
         makeGC();
     }
@@ -194,7 +195,8 @@ public class WLGraphicsDevice extends GraphicsDevice {
         this.widthMm = widthMm;
         this.heightMm = heightMm;
         this.displayScale = scale;
-        this.effectiveScale =  WLGraphicsEnvironment.effectiveScaleFrom(scale);
+        this.effectiveScale =  WLGraphicsEnvironment.effectiveScaleFrom(scale,
+                width, height, widthLogical, heightLogical);
 
         // It is necessary to create new config objects whenever this device changes
         // as GraphicsConfiguration identity is used to detect changes in scale, among other things.

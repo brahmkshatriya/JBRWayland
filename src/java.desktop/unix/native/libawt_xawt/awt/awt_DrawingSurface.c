@@ -305,6 +305,10 @@ awt_DrawingSurface_GetDrawingSurfaceInfo(JAWT_DrawingSurface* ds)
     XWindowAttributes attrs;
     jlongArray wlData;
     jlong* wl;
+    union {
+        jlong bits;
+        double value;
+    } wlDouble;
 
     if (ds == NULL) {
 #ifdef DEBUG
@@ -349,10 +353,12 @@ awt_DrawingSurface_GetDrawingSurfaceInfo(JAWT_DrawingSurface* ds)
         pw->width = (int)wl[4];
         pw->height = (int)wl[5];
         pw->scale = (int)wl[6];
-        pw->javaX = (int)wl[7];
-        pw->javaY = (int)wl[8];
-        pw->javaWidth = (int)wl[9];
-        pw->javaHeight = (int)wl[10];
+        wlDouble.bits = wl[7];
+        pw->effectiveScale = wlDouble.value;
+        pw->javaX = (int)wl[8];
+        pw->javaY = (int)wl[9];
+        pw->javaWidth = (int)wl[10];
+        pw->javaHeight = (int)wl[11];
 
         (*env)->ReleaseLongArrayElements(env, wlData, wl, JNI_ABORT);
         (*env)->DeleteLocalRef(env, wlData);

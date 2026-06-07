@@ -202,7 +202,7 @@ public class WLGraphicsEnvironment extends SunGraphicsEnvironment implements HiD
         }
 
         if (LogDisplay.ENABLED) {
-            double effectiveScale = effectiveScaleFrom(scale);
+            double effectiveScale = effectiveScaleFrom(scale, width, height, widthLogical, heightLogical);
             LogDisplay log = (gd == null) ? LogDisplay.ADDED : LogDisplay.CHANGED;
             log.log(wlID, (int) (width / effectiveScale) + "x" + (int) (height / effectiveScale), effectiveScale);
         }
@@ -310,6 +310,20 @@ public class WLGraphicsEnvironment extends SunGraphicsEnvironment implements HiD
 
     static double effectiveScaleFrom(int displayScale) {
         return debugScaleEnabled ? SunGraphicsEnvironment.getDebugScale() : displayScale;
+    }
+
+    static double effectiveScaleFrom(int displayScale, int width, int height,
+                                     int widthLogical, int heightLogical) {
+        if (debugScaleEnabled || widthLogical <= 0 || heightLogical <= 0) {
+            return effectiveScaleFrom(displayScale);
+        }
+        if (widthLogical == (int) Math.ceil((double) width / displayScale)
+                && heightLogical == (int) Math.ceil((double) height / displayScale)) {
+            return displayScale;
+        }
+        double widthScale = (double) width / widthLogical;
+        double heightScale = (double) height / heightLogical;
+        return Math.rint(((widthScale + heightScale) / 2.0) * 120.0) / 120.0;
     }
 
     static boolean isDebugScaleEnabled() {

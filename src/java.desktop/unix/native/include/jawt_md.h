@@ -72,6 +72,7 @@ typedef struct jawt_WaylandDrawingSurfaceInfo {
     int width;
     int height;
     int scale;
+    double effectiveScale;
     int javaX;
     int javaY;
     int javaWidth;

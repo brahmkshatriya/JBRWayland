@@ -259,6 +259,7 @@ public class WLToolkit extends UNIXToolkit implements Runnable, ToolkitAPI {
                 surfaceWidth,
                 surfaceHeight,
                 peer.getDisplayScale(),
+                Double.doubleToRawLongBits(((WLGraphicsConfig) peer.getGraphicsConfiguration()).getEffectiveScale()),
                 javaX,
                 javaY,
                 javaWidth,
